@@ -57,6 +57,7 @@ def get_options(args=None):
     # fl-gfn
     parser.add_argument('--gfn', action='store_true')
     parser.add_argument('--beta', type=float, default=1)
+    parser.add_argument('--obj_index', type=int, default=1, choices = [0, 1], help="0: original obj, 1: best so far")
     
     ### network
     parser.add_argument('--v_range', type=float, default=6.)

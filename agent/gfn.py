@@ -678,8 +678,8 @@ def train_batch(
             flows_n = flows[-1].view(-1)
             logr = -torch.stack(memory.obj[:-1]) #- torch.tensor(memory.obj[0])
             logr_next = -torch.stack(memory.obj[1:]) #- torch.tensor(memory.obj[0])
-            e_diff = (-logr_next[:, :, 0] + logr[:, :, 0]).sum(0).view(-1)
-            loss = (log_pfs - log_pbs + flows_m - flows_n + 50*e_diff).pow(2).mean()
+            e_diff = (-logr_next[:, :, opts.obj_index] + logr[:, :, opts.obj_index]).sum(0).view(-1)  # 0: original obj, 1: best so far
+            loss = (log_pfs - log_pbs + flows_m - flows_n + opts.beta*e_diff).pow(2).mean()
             
             # log_pfs = torch.stack(logprobs).view(-1) #torch.stack(logprobs[:-1]).view(-1)
             # log_pbs = torch.zeros(log_pfs.size()).to(log_pfs.device)
