@@ -904,7 +904,7 @@ def train_guided(
             #                                             )
             # _, flow = agent.critic(_to_critic, old_obj[tt+1], memory.context2[tt+1])  # log \tilde F(S), _to_critic = h_t
             new_to_critic = agent.actor(problem,batch,batch_feature,solution,context,context2,None,only_critic = True)
-            _, flow = agent.critic(new_to_critic, obj, context2)[0]
+            _, flow = agent.critic(new_to_critic, obj, context2)
             
             if t == T:
                 flow.fill_(0)  # done; filde F = F / R = 1 (log 1 = 0)
