@@ -13,7 +13,7 @@ def log_to_screen(time_used, init_value, best_value, reward, costs_history, sear
     print('-'*60)
     print('Avg init cost:'.center(35), '{:<10f} +- {:<10f}'.format(
             init_value.mean(), torch.std(init_value) / math.sqrt(batch_size)))
-    for per in range(500,T+1,500):
+    for per in range(50,T+1,50):
         cost_ = costs_history[:,per]
         print(f'Avg cost after T={per} steps:'.center(35), '{:<10f} +- {:<10f}'.format(
                 cost_.mean(), 
@@ -21,7 +21,7 @@ def log_to_screen(time_used, init_value, best_value, reward, costs_history, sear
     # best cost
     print('-'*60)
     
-    for per in range(500,T+1,500):
+    for per in range(50,T+1,50):
         cost_ = search_history[:,per]
         print(f'Avg best cost after T={per} steps:'.center(35), '{:<10f} +- {:<10f}'.format(
                 cost_.mean(), 

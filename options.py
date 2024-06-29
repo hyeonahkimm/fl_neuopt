@@ -8,7 +8,7 @@ def get_options(args=None):
     parser = argparse.ArgumentParser(description="NeuOpt-GIRE")
 
     ### overall settings
-    parser.add_argument('agent', default='ppo', choices = ['ppo', 'gfn'], help="Agent, default 'ppo'")
+    parser.add_argument('agent', default='ppo', choices = ['ppo', 'gfn', 'mle'], help="Agent, default 'ppo'")
     parser.add_argument('--problem', default='tsp', choices = ['tsp', 'cvrp'], help="The problem to solve, default 'tsp'")
     parser.add_argument('--graph_size', type=int, default=20, help="The size of the problem graph")
     parser.add_argument('--dummy_rate', type=float, default=0.5) # 0.5, 0.4, 0.2 for CVRP20, 50, 100, respectively
@@ -44,7 +44,7 @@ def get_options(args=None):
     parser.add_argument('--T_train', type=int, default=200)
     parser.add_argument('--n_step', type=int, default=4)
     parser.add_argument('--batch_size', type=int, default=512, help='Number of instances per batch during training')
-    parser.add_argument('--epoch_end', type=int, default=200, help='End at epoch #')
+    parser.add_argument('--epoch_end', type=int, default=10, help='End at epoch #')
     parser.add_argument('--epoch_size', type=int, default=10240, help='Number of instances per epoch during training')
     parser.add_argument('--val_size', type=int, default=1000, help='Number of instances used for reporting validation performance')
     parser.add_argument('--val_batch_size', type=int, default=1000, help='Number of instances per batch used for reporting validation performance')
@@ -56,8 +56,12 @@ def get_options(args=None):
     parser.add_argument('--max_grad_norm', type=float, default=0.05, help='Maximum L2 norm for gradient clipping, default 1.0 (0 to disable clipping)')
     # fl-gfn
     parser.add_argument('--gfn', action='store_true')
+    # parser.add_argument('--uniform_pb', action='store_true')
     parser.add_argument('--beta', type=float, default=1)
     parser.add_argument('--obj_index', type=int, default=1, choices = [0, 1], help="0: original obj, 1: best so far")
+    parser.add_argument('--without_timestep', action='store_true')
+    parser.add_argument('--buffer_size', type=int, default=500_000)
+    parser.add_argument('--guided', action='store_true')
     
     ### network
     parser.add_argument('--v_range', type=float, default=6.)
@@ -85,7 +89,10 @@ def get_options(args=None):
     if opts.problem == 'tsp':
         opts.wo_feature1 = opts.wo_feature2 = opts.wo_feature3 = opts.wo_bonus = opts.wo_regular = True
         
-    opts.no_tb = True
+    opts.no_tb = True  # disable tensorboard_logger
+    
+    if opts.eval_only:
+        opts.no_wandb = True
     
     ### figure out whether to use distributed training
     opts.world_size = torch.cuda.device_count()

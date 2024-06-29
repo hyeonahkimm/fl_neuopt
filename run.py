@@ -11,6 +11,7 @@ import wandb
 
 from problems.problem_tsp import TSP
 from problems.problem_cvrp import CVRP
+from agent.ppo import PPO
 
 def load_problem(name):
     problem = {
@@ -65,17 +66,25 @@ def run(opts):
     
     # Figure out the RL algorithm
     if opts.agent == 'ppo':
-        from agent.ppo import PPO
         agent = PPO(problem, opts)
+        expert = None
     elif opts.agent == 'gfn':
         from agent.gfn import GFN
         agent = GFN(problem, opts)
+        expert = PPO(problem, opts) if opts.guided else None
+    elif opts.agent == 'mle':
+        from agent.mle import MLE
+        agent = MLE(problem, opts)
+        expert = PPO(problem, opts)
 
     # Load data from load_path
     assert opts.load_path is None or opts.resume is None, "Only one of load path and resume can be given"
     load_path = opts.load_path if opts.load_path is not None else opts.resume
     if load_path is not None:
         agent.load(load_path)
+    
+    if expert is not None:
+        expert.load(f'pre-trained/{opts.problem}{opts.graph_size}.pt', actor_only=True)
 
     # Do validation only
     if opts.eval_only:
@@ -89,7 +98,7 @@ def run(opts):
             agent.opts.epoch_start = epoch_resume + 1
     
         # Start the actual training loop
-        agent.start_training(problem, opts.val_dataset, tb_logger)
+        agent.start_training(problem, opts.val_dataset, tb_logger, expert=expert)
     
     if (not opts.no_wandb):
         wandb.finish()

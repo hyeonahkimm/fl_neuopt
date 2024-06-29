@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+from einops import rearrange
 from nets.graph_layers import MultiHeadEncoder, EmbeddingNet, MultiHeadPosCompat, kopt_Decoder
 
 class mySequential(nn.Sequential):
@@ -26,7 +27,9 @@ class Actor(nn.Module):
                  with_RNN,
                  with_feature1,
                  with_feature3,
-                 with_simpleMDP
+                 with_simpleMDP,
+                 with_timestep=False,
+                 T_max = 100,
                  ):
         super(Actor, self).__init__()
 
@@ -43,6 +46,7 @@ class Actor(nn.Module):
         self.with_feature1 = with_feature1
         self.with_feature3 = with_feature3
         self.with_simpleMDP = with_simpleMDP
+        self.with_timestep = with_timestep
         
         if problem_name == 'tsp':
             self.node_dim = 2
@@ -50,6 +54,20 @@ class Actor(nn.Module):
             self.node_dim = 8 if self.with_feature1 else 6
         else:
             raise NotImplementedError()
+        
+        if with_timestep:
+            # From https://github.com/zdhNarsil/Diffusion-Generative-Flow-Samplers
+            self.register_buffer(
+                "timestep_coeff", torch.linspace(start=0.1, end=100, steps=self.embedding_dim)[None]
+            )
+            self.timestep_phase = nn.Parameter(torch.randn(self.embedding_dim)[None])
+            
+            self.timestep_embed = nn.Sequential(
+                nn.Linear(2 * self.embedding_dim, self.embedding_dim),
+                nn.GELU(),
+                nn.Linear(self.embedding_dim, self.embedding_dim),
+            )
+        
             
         self.embedder = EmbeddingNet(
                             self.node_dim,
@@ -87,7 +105,7 @@ class Actor(nn.Module):
         trainable_num = sum(p.numel() for p in self.parameters() if p.requires_grad)
         return {'Total': total_num, 'Trainable': trainable_num}
 
-    def forward(self, problem, batch, x_in, solution, context, context2,last_action, fixed_action = None, require_entropy = False, to_critic = False, only_critic  = False):
+    def forward(self, problem, batch, x_in, solution, context, context2,last_action, fixed_action = None, require_entropy = False, to_critic = False, only_critic  = False, time_cond=None):
         # the embedded input x
         bs, gs, in_d = x_in.size()
         
@@ -104,9 +122,25 @@ class Actor(nn.Module):
             visited_time = problem.get_order(solution, return_solution = False)
         else: 
             raise NotImplementedError()
-            
+        
+        
         h_embed, h_pos = self.embedder(x_in, solution, visited_time)
         aux_scores = self.pos_encoder(h_pos)
+        
+        if self.with_timestep and time_cond is not None:
+            cond = time_cond.view(-1, 1).expand((x_in.shape[0], 1))
+            sin_embed_cond = torch.sin(
+                # (1, channels) * (bs, 1) + (1, channels)
+                (self.timestep_coeff * cond.float()) + self.timestep_phase
+            )
+            cos_embed_cond = torch.cos(
+                (self.timestep_coeff * cond.float()) + self.timestep_phase
+            )
+            embed_cond = self.timestep_embed(
+                rearrange([sin_embed_cond, cos_embed_cond], "d b w -> b (d w)")
+            )
+            
+            h_embed += embed_cond.unsqueeze(1).repeat(1, h_embed.shape[1], 1)
         
         h_em_final, _ = self.encoder(h_embed, aux_scores)
         

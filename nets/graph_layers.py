@@ -409,7 +409,7 @@ class kopt_Decoder(nn.Module):
               logits = torch.tanh(result) * self.range
               # assert (~mask).any(-1).all(), (i, (~mask).any(-1))
               logits[mask.clone()] = -1e30
-              if i == 0 and isinstance(last_action, torch.Tensor):
+              if i == 0 and isinstance(last_action, torch.Tensor): # and last_action.max() >= 0:
                   logits.scatter_(1, last_action[:,:1], -1e30)
               probs = F.softmax(logits, dim = -1)
               
