@@ -114,6 +114,7 @@ class Memory:
         self.context = []
         self.context2 = []
         self.timestep = []
+        self.ptr = []
         
     def clear_memory(self):
         del self.actions[:]
@@ -124,6 +125,17 @@ class Memory:
         del self.context[:]
         del self.context2[:]
         del self.timestep[:]
+    
+    def delete_oldest_trj(self):
+        ptr = self.ptr.pop(0)
+        del self.actions[:ptr]
+        del self.states[:ptr]
+        del self.logprobs[:ptr]
+        del self.rewards[:ptr]
+        del self.obj[:ptr]
+        del self.context[:ptr]
+        del self.context2[:ptr]
+        del self.timestep[:ptr]
 
 class MLE:
     def __init__(self, problem, opts):
@@ -590,137 +602,134 @@ def train_batch_buffer(
     # sample trajectory
     t = 0
     memory = Memory()
-    while t < T:
-        
-        t_s = t
-        total_cost = 0
-        total_cost_wo_feasible = 0
-        entropy = []
-        bl_val_detached = []
-        bl_val = []
-        memory.actions.append(action)
-        
-        while t < T: # t - t_s < n_step and not (t == T):
-            
-            # pass actor
-            memory.states.append(solution.clone().cpu())
-            if context is not None:
-                memory.context.append(tuple(t.clone().cpu() for t in context))
-                memory.context2.append(context2.clone().cpu())
-            else:
-                memory.context.append(None)
-                memory.context2.append(None)
-            
-            with torch.no_grad():
-                action, log_lh, _to_critic, entro_p  = expert.actor(problem,
-                                                                batch,
-                                                                batch_feature,
-                                                                solution,
-                                                                context,
-                                                                context2,
-                                                                action,
-                                                                require_entropy = True,
-                                                                to_critic = True)
     
-            memory.actions.append(action.clone().cpu())
-            memory.logprobs.append(log_lh.clone().cpu())
-            memory.obj.append(obj.clone().cpu())
-            memory.timestep.append(t)
-            # entropy.append(entro_p)
-            
-            # pass critic
-            # baseline_val_detached, baseline_val = expert.critic(_to_critic, obj, context2)
-            # bl_val_detached.append(baseline_val_detached)
-            # bl_val.append(baseline_val)
-            
-            # state transient
-            # rewards[0] = max(delta obj, 0.0)
-            solution, rewards, obj, feasibility_history, context, context2, info = problem.step(batch, 
-                                                                                                solution, 
-                                                                                                action, 
-                                                                                                obj, 
-                                                                                                feasibility_history,
-                                                                                                t,
-                                                                                                weights = weights)
-            # batch_reward.append(rewards[:,0].clone())
-            memory.rewards.append(rewards.cpu())
-            
-            total_cost = total_cost + obj[:,1]
-            total_cost_wo_feasible = total_cost_wo_feasible + obj[:,2]
-            
-            # next            
-            t = t + 1
-            
-        # store info
-        t_time = t - t_s
-        total_cost = total_cost / t_time
-        total_cost_wo_feasible = total_cost_wo_feasible / t_time
+    total_cost = 0
+    total_cost_wo_feasible = 0
+    entropy = []
+    memory.actions.append(action)
+    
+    while t < T: # t - t_s < n_step and not (t == T):
         
-        # Optimize ppo policy for K mini-epochs:
-        for _k in range(K_epochs):
-            
-            current_step = int(step * T / n_step * K_epochs + (t-1)//n_step * K_epochs  + _k)
-            
-            for t_s in range(0, T, n_step):
-                # get new action_prob
-                # import pdb; pdb.set_trace()
-                logprobs = []  
-                entropy = []
-                for tt in range(t_s, t_s + n_step):
-                    _, log_p, _, entro_p = agent.actor(problem,
-                                                        batch,
-                                                        batch_feature,
-                                                        memory.states[tt].to(opts.device),
-                                                        memory.context[tt],
-                                                        memory.context2[tt],
-                                                        last_action = memory.actions[tt].to(opts.device) if tt > 0 else memory.actions[tt],   
-                                                        fixed_action = memory.actions[tt+1].to(opts.device),
-                                                        require_entropy = True,# take same action
-                                                        to_critic = False)
-                    
-                    # assert (_ == memory.actions[tt+1]).all()
-                    logprobs.append(log_p)
-                    entropy.append(entro_p)
+        # pass actor
+        memory.states.append(solution.clone().cpu())
+        if context is not None:
+            memory.context.append(tuple(t.clone().cpu() for t in context))
+            memory.context2.append(context2.clone().cpu())
+        else:
+            memory.context.append(None)
+            memory.context2.append(None)
         
-                logprobs = torch.stack(logprobs).view(-1)
-                entropy = torch.stack(entropy).view(-1)
-                
-                # calculate loss
-                loss = (-1) * logprobs.mean()  # baseline_loss + reinforce_loss
+        with torch.no_grad():
+            action, log_lh, _to_critic, entro_p  = expert.actor(problem,
+                                                            batch,
+                                                            batch_feature,
+                                                            solution,
+                                                            context,
+                                                            context2,
+                                                            action,
+                                                            require_entropy = True,
+                                                            to_critic = True)
 
-                # update gradient step
-                agent.optimizer.zero_grad()
-                loss.backward()
-                
-                # Clip gradient norm and get (clipped) gradient norms for logging
-                grad_norms = clip_grad_norms(agent.optimizer.param_groups, opts.max_grad_norm)
-                
-                # perform gradient descent
-                agent.optimizer.step()
-    
-                # Logging to tensorboard            
-                # if(not opts.no_tb) and rank == 0:
-                #     if (current_step + 1) % int(opts.log_step) == 0:
-                #         log_to_tb_train(tb_logger, agent, Reward, ratios, bl_val_detached, total_cost, total_cost_wo_feasible, grad_norms, entropy, approx_kl_divergence,
-                #            reinforce_loss, baseline_loss, c_cost_logger, weights, logprobs, initial_cost, info, current_step + 1)
-                if (not opts.no_wandb) and rank == 0:
-                    log = {'learning_rage': agent.optimizer.param_groups[0]['lr'],
-                        'avg_cost': total_cost.mean().item(),
-                        'avg_cost_wo_feasible': total_cost_wo_feasible.mean().item(),
-                        'weights': weights,
-                        'entropy': entropy.mean().item(),
-                        'total_loss': loss.item(), #(reinforce_loss+baseline_loss).item(),
-                        'nll': -logprobs.mean().item(),
-                        'mini_step': current_step + 1
-                        }
-                    wandb.log({'train': log})
-                        
-                if rank == 0: 
-                    pbar.set_postfix(loss = loss.item(), avg_cost = total_cost.mean().item())
-                    pbar.update(1)
+        memory.actions.append(action.clone().cpu())
+        memory.logprobs.append(log_lh.clone().cpu())
+        memory.obj.append(obj.clone().cpu())
+        memory.timestep.append(t)
+        # entropy.append(entro_p)
         
-        # end update
-        memory.clear_memory()
+        # pass critic
+        # baseline_val_detached, baseline_val = expert.critic(_to_critic, obj, context2)
+        # bl_val_detached.append(baseline_val_detached)
+        # bl_val.append(baseline_val)
+        
+        # state transient
+        # rewards[0] = max(delta obj, 0.0)
+        solution, rewards, obj, feasibility_history, context, context2, info = problem.step(batch, 
+                                                                                            solution, 
+                                                                                            action, 
+                                                                                            obj, 
+                                                                                            feasibility_history,
+                                                                                            t,
+                                                                                            weights = weights)
+        # batch_reward.append(rewards[:,0].clone())
+        memory.rewards.append(rewards.cpu())
+        
+        total_cost = total_cost + obj[:,1]
+        total_cost_wo_feasible = total_cost_wo_feasible + obj[:,2]
+        
+        # next            
+        t = t + 1
+        
+    # store info
+    t_time = t - t_s
+    total_cost = total_cost / t_time
+    total_cost_wo_feasible = total_cost_wo_feasible / t_time
+    
+    # Optimize ppo policy for K mini-epochs:
+    for _k in range(K_epochs):
+        
+        current_step = int(step * T / n_step * K_epochs + (t-1)//n_step * K_epochs  + _k)
+        
+        # for t_s in range(0, T, n_step):
+            # get new action_prob
+            # import pdb; pdb.set_trace()
+            # logprobs = []  
+            # entropy = []
+            # for tt in range(t_s, t_s + n_step):
+        for tt in range(T):
+            _, log_p, _, entro_p = agent.actor(problem,
+                                                batch,
+                                                batch_feature,
+                                                memory.states[tt].to(opts.device),
+                                                memory.context[tt],
+                                                memory.context2[tt],
+                                                last_action = memory.actions[tt].to(opts.device) if tt > 0 else memory.actions[tt],   
+                                                fixed_action = memory.actions[tt+1].to(opts.device),
+                                                require_entropy = True,# take same action
+                                                to_critic = False)
+            
+            # assert (_ == memory.actions[tt+1]).all()
+            # logprobs.append(log_p)
+            # entropy.append(entro_p)
+    
+            logprobs = log_p.view(-1) # torch.stack(logprobs).view(-1)
+            entropy = entro_p.view(-1) #torch.stack(entropy).view(-1)
+            
+            # calculate loss
+            loss = (-1) * logprobs.mean()  # baseline_loss + reinforce_loss
+
+            # update gradient step
+            agent.optimizer.zero_grad()
+            loss.backward()
+            
+            # Clip gradient norm and get (clipped) gradient norms for logging
+            grad_norms = clip_grad_norms(agent.optimizer.param_groups, opts.max_grad_norm)
+            
+            # perform gradient descent
+            agent.optimizer.step()
+
+            # Logging to tensorboard            
+            # if(not opts.no_tb) and rank == 0:
+            #     if (current_step + 1) % int(opts.log_step) == 0:
+            #         log_to_tb_train(tb_logger, agent, Reward, ratios, bl_val_detached, total_cost, total_cost_wo_feasible, grad_norms, entropy, approx_kl_divergence,
+            #            reinforce_loss, baseline_loss, c_cost_logger, weights, logprobs, initial_cost, info, current_step + 1)
+            if (not opts.no_wandb) and rank == 0:
+                log = {'learning_rage': agent.optimizer.param_groups[0]['lr'],
+                    'avg_cost': total_cost.mean().item(),
+                    'avg_cost_wo_feasible': total_cost_wo_feasible.mean().item(),
+                    'weights': weights,
+                    'entropy': entropy.mean().item(),
+                    'total_loss': loss.item(), #(reinforce_loss+baseline_loss).item(),
+                    'nll': -logprobs.mean().item(),
+                    'mini_step': current_step + 1
+                    }
+                wandb.log({'train': log})
+                    
+            if rank == 0: 
+                pbar.set_postfix(loss = loss.item(), avg_cost = total_cost.mean().item())
+                pbar.update(1)
+    
+    # end update
+    memory.clear_memory()
    
 
 def train_batch(
