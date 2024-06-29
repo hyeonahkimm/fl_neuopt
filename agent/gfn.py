@@ -388,7 +388,7 @@ def train(rank, problem, agent, val_dataset, tb_logger, expert):
                 batch_reward = []
             
             if opts.guided:
-                train_guided_onestep(rank,
+                train_guided(rank,
                         problem,
                         agent,
                         expert,
