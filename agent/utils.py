@@ -119,5 +119,6 @@ def validate(rank, problem, agent, val_dataset, tb_logger, distributed = False, 
                     'avg_total_reward': reward.sum(1).mean().item(),
                     'avg_step_reward': reward.mean().item(),
                     'avg_init_cost': initial_cost.mean().item(),
-                    'avg_best_cost': bv.mean().item()}
+                    'avg_best_cost': bv.mean().item(),
+                    'epoch': _id}
         wandb.log({'val': val_logs})

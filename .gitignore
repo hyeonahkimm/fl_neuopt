@@ -9,7 +9,6 @@ outputs/
 others/
 .DS_Store
 wandb/
-pre-trained/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
