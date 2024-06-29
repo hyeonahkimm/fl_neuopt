@@ -660,7 +660,7 @@ def train_batch_buffer(
         t = t + 1
         
     # store info
-    t_time = t - t_s
+    t_time = t
     total_cost = total_cost / t_time
     total_cost_wo_feasible = total_cost_wo_feasible / t_time
     
@@ -685,7 +685,9 @@ def train_batch_buffer(
                                                 last_action = memory.actions[tt].to(opts.device) if tt > 0 else memory.actions[tt],   
                                                 fixed_action = memory.actions[tt+1].to(opts.device),
                                                 require_entropy = True,# take same action
-                                                to_critic = False)
+                                                to_critic = False,
+                                                time_cond = torch.tensor((tt)/(T)).float().to(solution.device) if not opts.without_timestep else None
+                                                )
             
             # assert (_ == memory.actions[tt+1]).all()
             # logprobs.append(log_p)
