@@ -375,17 +375,17 @@ def train(rank, problem, agent, val_dataset, tb_logger, expert):
                     bar_format='{l_bar}{bar:20}{r_bar}{bar:-20b}')
 
         for batch_id, batch in enumerate(training_dataloader):
-            if batch_reward is None:
-                batch_reward = []
-                weights = 0
-            else:
-                batch_reward = torch.cat(batch_reward)
-                if opts.distributed:
-                    dist.barrier()
-                    batch_reward = gather_tensor_and_concat(batch_reward.contiguous())
-                    dist.barrier()
-                weights = batch_reward.mean()
-                batch_reward = []
+            # if batch_reward is None:
+            #     batch_reward = []
+            #     weights = 0
+            # else:
+            #     batch_reward = torch.cat(batch_reward)
+            #     if opts.distributed:
+            #         dist.barrier()
+            #         batch_reward = gather_tensor_and_concat(batch_reward.contiguous())
+            #         dist.barrier()
+            #     weights = batch_reward.mean()
+            #     batch_reward = []
             
             if opts.guided:
                 train_guided(rank,
@@ -399,7 +399,7 @@ def train(rank, problem, agent, val_dataset, tb_logger, expert):
                         opts,
                         pbar,
                         batch_reward,
-                        weights
+                        0.
                         )
             else:
                 train_batch(rank,
@@ -412,7 +412,7 @@ def train(rank, problem, agent, val_dataset, tb_logger, expert):
                             opts,
                             pbar,
                             batch_reward,
-                            weights
+                            0.
                             )
             step += 1
             
@@ -563,7 +563,7 @@ def train_batch(
                                                                                                 feasibility_history,
                                                                                                 t,
                                                                                                 weights = weights)
-            batch_reward.append(rewards[:,0].clone())
+            # batch_reward.append(rewards[:,0].clone())
             memory.rewards.append(rewards)
             memory.obj.append(obj.clone())
             
@@ -802,9 +802,9 @@ def train_guided(
                                                                 to_critic = True,
                                                                 # time_cond = torch.tensor((t)/(T)).float().to(solution.device) if not opts.without_timestep else None
                                                                 )
-   
             memory.actions.append(action.clone())
             memory.logprobs.append(log_lh.clone())
+            memory.obj.append(obj.clone())
             entropy.append(entro_p)
             
             # pass critic
@@ -822,9 +822,8 @@ def train_guided(
                                                                                                 feasibility_history,
                                                                                                 t,
                                                                                                 weights = weights)
-            batch_reward.append(rewards[:,0].clone())
+            # batch_reward.append(rewards[:,0].clone())
             memory.rewards.append(rewards)
-            memory.obj.append(obj.clone())
             
             # E(s->s') = obj(s') / obj(s)
             # transitions = (batch_feature, prev_solution, context, context2, t, action, solution, prev_obj, obj, rewards)
@@ -840,6 +839,7 @@ def train_guided(
         
         # last state
         memory.states.append(solution.clone())
+        memory.obj.append(obj.clone())
         if context is not None:
             memory.context.append(tuple(t.clone() for t in context))
             memory.context2.append(context2.clone())
@@ -886,25 +886,23 @@ def train_guided(
                 logprobs.append(log_p)
                 entropy.append(entro_p)
                 # import pdb; pdb.set_trace()
-                _, flow = agent.critic(_to_critic, old_obj[tt], memory.context2[tt])  # log \tilde F(S), _to_critic = h_t
+                _, flow = agent.critic(_to_critic, memory.obj[tt], memory.context2[tt])  # log \tilde F(S), _to_critic = h_t
                 flows.append(flow[:, 0])
                 
             # to get last flow
             # import pdb; pdb.set_trace()
             # _, log_p, _to_critic, entro_p 
-            _to_critic = agent.actor(problem,
+            new_to_critic = agent.actor(problem,
                                                         batch,
                                                         batch_feature,
                                                         memory.states[tt+1],
                                                         memory.context[tt+1],
                                                         memory.context2[tt+1],
                                                         last_action = memory.actions[tt+1],
-                                                        # require_entropy = True,# take same action
-                                                        # to_critic = True,
                                                         only_critic = True,
                                                         time_cond = torch.tensor((tt+t_s)/(T)).float().to(solution.device) if not opts.without_timestep else None
                                                         )
-            _, flow = agent.critic(_to_critic, old_obj[tt+1], memory.context2[tt+1])  # log \tilde F(S), _to_critic = h_t
+            _, flow = agent.critic(new_to_critic, memory.obj[tt+1], memory.context2[tt+1])  # log \tilde F(S), _to_critic = h_t
             # new_to_critic = agent.actor(problem,batch,batch_feature,solution,context,context2,None,only_critic = True)
             # _, flow = agent.critic(new_to_critic, obj, context2)
             
@@ -922,24 +920,8 @@ def train_guided(
             # import pdb; pdb.set_trace()
             # loss = (log_pfs - log_pbs + flows_m - flows_n + opts.beta*(e_diff)).pow(2).mean()
             loss = (log_pfs - log_pbs + flows_m - flows_n + opts.beta*(e_diff - e_diff.mean())).pow(2).mean()
-            
-            # log_pfs = torch.stack(logprobs).view(-1) #torch.stack(logprobs[:-1]).view(-1)
-            # log_pbs = torch.zeros(log_pfs.size()).to(log_pfs.device)
+        
             entropy = torch.stack(entropy).view(-1)  # not used for training (for logging)
-            # flows_next = torch.stack(flows[1:]).view(-1)  # torch.zeros(flows.shape).to(flows) #
-            # flows = torch.stack(flows[:-1]).view(-1)
-            # # e_diff = torch.stack(memory.rewards)[:-1, :, 0].view(-1)
-            # # reward 0: diff of best_so_far, 1: regulation, 2: bonus
-            # # e_diff = (- torch.stack(memory.obj[:-1]) + torch.stack(memory.obj[1:]))[:, :, 0].view(-1)  # 0: obj, 1: best_so_far, 2: best_so_far_wo_feasible
-            # logr = torch.stack(memory.obj[:-1]) - torch.tensor(memory.obj[0])
-            # logr_next = torch.stack(memory.obj[1:]) - torch.tensor(memory.obj[0])
-            # lhs = logr[:, :, 0].view(-1) + flows + log_pfs
-            # rhs = logr_next[:, :, 0].view(-1) + flows_next + log_pbs
-            # loss = (lhs - rhs).pow(2).mean()
-            
-            # import pdb; pdb.set_trace()
-            
-            # loss = (flows + log_pfs - flows_next - log_pbs + e_diff).pow(2).mean()
             
             # update gradient step
             agent.optimizer.zero_grad()
@@ -967,7 +949,7 @@ def train_guided(
                        'nll': -log_pfs.mean().item(),
                        'log_pfs': log_pfs.mean().item(),
                        'flows': flows_m.mean().item(), #flows.mean().item(),
-                       'flows_next': flows_m.mean().item(), #flows_next.mean().item(),
+                       'flows_next': flows_n.mean().item(), #flows_next.mean().item(),
                        'e_diff': (logr_next - logr).mean().item(), #e_diff.mean().item(),
                        'mini_step': current_step + 1
                        }
@@ -1056,6 +1038,7 @@ def train_guided_onestep(
 
         memory.actions.append(action.clone().cpu())
         memory.logprobs.append(log_lh.clone().cpu())
+        memory.obj.append(obj.clone().cpu())
         memory.timestep.append(t)
         # entropy.append(entro_p)
         
@@ -1075,7 +1058,6 @@ def train_guided_onestep(
                                                                                             weights = weights)
         # batch_reward.append(rewards[:,0].clone())
         memory.rewards.append(rewards.cpu())
-        memory.obj.append(obj.clone().cpu())
         
         total_cost = total_cost + obj[:,1]
         total_cost_wo_feasible = total_cost_wo_feasible + obj[:,2]
@@ -1085,6 +1067,7 @@ def train_guided_onestep(
         
     # last state
     memory.states.append(solution.clone().cpu())
+    memory.obj.append(obj.clone().cpu())
     if context is not None:
         memory.context.append(tuple(t.clone().cpu() for t in context))
         memory.context2.append(context2.clone().cpu())
@@ -1108,8 +1091,8 @@ def train_guided_onestep(
             # logprobs = []  
             # entropy = []
             # for tt in range(t_s, t_s + n_step):
-        for tt in range(T):
-            _, log_p, _, entro_p = agent.actor(problem,
+        for tt in range(T-1):
+            _, log_p, _to_critic, entro_p = agent.actor(problem,
                                                 batch,
                                                 batch_feature,
                                                 memory.states[tt].to(opts.device),
@@ -1118,7 +1101,7 @@ def train_guided_onestep(
                                                 last_action = memory.actions[tt].to(opts.device) if tt > 0 else memory.actions[tt],   
                                                 fixed_action = memory.actions[tt+1].to(opts.device),
                                                 require_entropy = True,# take same action
-                                                to_critic = False,
+                                                to_critic = True,
                                                 time_cond = torch.tensor((tt)/(T)).float().to(solution.device) if not opts.without_timestep else None
                                                 )
             
@@ -1132,20 +1115,20 @@ def train_guided_onestep(
             flows_m = flow[:, 0]
             
             # to get last flow
-            _, log_p, _to_critic, entro_p = agent.actor(problem,
-                                                        batch,
-                                                        batch_feature,
-                                                        memory.states[tt].to(opts.device),
-                                                        memory.context[tt],
-                                                        memory.context2[tt],
-                                                        last_action = memory.actions[tt].to(opts.device) if tt > 0 else memory.actions[tt],   
-                                                        fixed_action = memory.actions[tt+1].to(opts.device),
-                                                        require_entropy = True,# take same action
-                                                        to_critic = True,
-                                                        time_cond = torch.tensor((tt)/(T)).float().to(solution.device) if not opts.without_timestep else None
-                                                        )
+            new_to_critic = agent.actor(problem,
+                                    batch,
+                                    batch_feature,
+                                    memory.states[tt+1].to(opts.device),
+                                    memory.context[tt+1],
+                                    memory.context2[tt+1],
+                                    last_action = memory.actions[tt+1].to(opts.device) if tt > 0 else memory.actions[tt],   
+                                    # fixed_action = memory.actions[tt+1].to(opts.device),
+                                    # require_entropy = True,# take same action
+                                    only_critic = True,
+                                    time_cond = torch.tensor((tt+1)/(T)).float().to(solution.device) if not opts.without_timestep else None
+                                    )
             
-            _, flow = agent.critic(_to_critic, memory.obj[tt+1].to(opts.device), memory.context2[tt+1])  # log \tilde F(S), _to_critic = h_t
+            _, flow = agent.critic(new_to_critic, memory.obj[tt+1].to(opts.device), memory.context2[tt+1])  # log \tilde F(S), _to_critic = h_t
             
             if tt + 1 == T:
                 flow.fill_(0)  # done; filde F = F / R = 1 (log 1 = 0)
@@ -1180,6 +1163,9 @@ def train_guided_onestep(
                     'entropy': entropy.mean().item(),
                     'total_loss': loss.item(), #(reinforce_loss+baseline_loss).item(),
                     'nll': -logprobs.mean().item(),
+                    'log_pfs': log_pfs.mean().item(),
+                    'flows': flows_m.mean().item(), #flows.mean().item(),
+                    'flows_next': flows_n.mean().item(), #flows_next.mean().item(),
                     'mini_step': current_step + 1
                     }
                 wandb.log({'train': log})
