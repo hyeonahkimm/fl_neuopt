@@ -891,20 +891,22 @@ def train_guided(
                 
             # to get last flow
             # import pdb; pdb.set_trace()
-            # _, log_p, _to_critic, entro_p = agent.actor(problem,
-            #                                             batch,
-            #                                             batch_feature,
-            #                                             memory.states[tt+1],
-            #                                             memory.context[tt+1],
-            #                                             memory.context2[tt+1],
-            #                                             last_action = memory.actions[tt+1],
-            #                                             require_entropy = True,# take same action
-            #                                             to_critic = True,
-            #                                             time_cond = torch.tensor((tt+t_s)/(T)).float().to(solution.device) if not opts.without_timestep else None
-            #                                             )
-            # _, flow = agent.critic(_to_critic, old_obj[tt+1], memory.context2[tt+1])  # log \tilde F(S), _to_critic = h_t
-            new_to_critic = agent.actor(problem,batch,batch_feature,solution,context,context2,None,only_critic = True)
-            _, flow = agent.critic(new_to_critic, obj, context2)
+            # _, log_p, _to_critic, entro_p 
+            _to_critic = agent.actor(problem,
+                                                        batch,
+                                                        batch_feature,
+                                                        memory.states[tt+1],
+                                                        memory.context[tt+1],
+                                                        memory.context2[tt+1],
+                                                        last_action = memory.actions[tt+1],
+                                                        # require_entropy = True,# take same action
+                                                        # to_critic = True,
+                                                        only_critic = True,
+                                                        time_cond = torch.tensor((tt+t_s)/(T)).float().to(solution.device) if not opts.without_timestep else None
+                                                        )
+            _, flow = agent.critic(_to_critic, old_obj[tt+1], memory.context2[tt+1])  # log \tilde F(S), _to_critic = h_t
+            # new_to_critic = agent.actor(problem,batch,batch_feature,solution,context,context2,None,only_critic = True)
+            # _, flow = agent.critic(new_to_critic, obj, context2)
             
             if t == T:
                 flow.fill_(0)  # done; filde F = F / R = 1 (log 1 = 0)
@@ -978,6 +980,7 @@ def train_guided(
         # end update
         memory.clear_memory()
         
+
 def train_guided_onestep(
         rank,
         problem,
